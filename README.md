@@ -1,6 +1,8 @@
 ## Brightness Adjuster 
 *A GTK based brightness adjuster 1.0.0*
-![Icon](icons/64x64/brightness-adjuster.png)
+
+
+![Icon](icons/128x128/brightness-adjuster.png)
 ## Description
 -----------
 Brightness Adjuster is a gtk based brightness ajuster made for linux based distros. It is a subtitute for Brightness Controller made using Qt. It features
