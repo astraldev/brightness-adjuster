@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Brightness Adjuster
+Comment=Adjusts primary and all secondary brightness
+Exec=brightness-adjuster
+Terminal=false
+Type=Application
+StartupNotify=false
+Categories=Utility;Accessories
+Icon=brightness-adjuster.png
+X-Desktop-File-Install-Version=0.24

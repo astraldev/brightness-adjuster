@@ -1,0 +1,399 @@
+#! /usr/bin/env python3
+import gi, os
+import subprocess
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, Gdk, GLib, Gio
+import configparser
+
+builder = Gtk.Builder()
+
+config_dir = f"{os.path.expandvars('$HOME')}/.brightness-adjuster/config.cfg"
+config_text = "[settings]\nrefresh=5\nred=rgb(230, 33, 33)\ngreen=rgb(47, 207, 32)\nblue=rgb(35, 97, 212)\nwhite=rgb(240, 248, 255)"
+def load_config():
+  if not os.path.exists(config_dir):
+    try:
+      os.mkdir(f"{os.path.expandvars('$HOME')}/.brightness-adjuster")
+    except:
+      pass
+  fd = open(config_dir, "w")
+  fd.write(config_text)
+
+def test_config():
+  try:
+    configuration.get("settings", "red")
+    configuration.get("settings", "refresh")
+    configuration.get("settings", "green")
+    configuration.get("settings", "blue")
+    configuration.get("settings", "white")
+  except:
+    fd = open(config_dir, "w")
+    fd.write(config_text)
+
+load_config()
+test_config()
+
+directory = f"{os.path.expandvars('$HOME')}/.local"
+
+css_provider = Gtk.CssProvider()
+css_provider.load_from_path(f"{directory}/brightness-adjuster/ui/style.css")
+main_display_screen = Gdk.Display.get_default_screen(Gdk.Display.get_default())
+Gtk.StyleContext().add_provider_for_screen(main_display_screen, css_provider, 600)
+
+builder.add_from_file(f"{directory}/brightness-adjuster/ui/ui.glade")
+configuration = configparser.ConfigParser()
+configuration.read(config_dir)
+
+def execute_command(command):
+  return subprocess.check_output(command.split())
+
+def get_screens():
+  txt = execute_command("xrandr --verbose")
+  txt = txt.split(b"\n")
+  screens = []
+  screen = []
+  for line in txt:
+    if line.find(b" connected ") != -1:
+      screen.append(str(line.split(b" connected")[0]).replace("b'", "").replace("'", ""))
+    if line.find(b"Brightness:") != -1:
+      screen.append(str(line.split(b"Brightness: ")[1]).replace("b'", "").replace("'", ""))
+    if line.find(b"Gamma:") != -1:
+      screen.append(str(line.split(b"Gamma:"+b" "*6)[1]).replace("b'", "").replace("'", ""))
+    if len(screen) == 3:
+      screens.append(screen)
+      screen = []
+
+  return screens
+
+class SigHandler:
+  def __init__(self):
+    self.notebook = builder.get_object("_screen_notebook")
+    self.screens = {}
+    self.window = builder.get_object("main_window")
+    self.window.set_icon_name("brightness-adjuster")
+    self.preference = builder.get_object("pref_window")
+
+    self.about = builder.get_object("about_window")
+    self.red = Gdk.RGBA()
+    self.red.parse(configuration.get("settings", "red"))
+    self.green = Gdk.RGBA()
+    self.green.parse(configuration.get("settings", "green"))
+    self.blue = Gdk.RGBA()
+    self.blue.parse(configuration.get("settings", "blue"))
+    self.white = Gdk.RGBA()
+    self.white.parse(configuration.get("settings", "white"))
+    self.refresh_num = configuration.getint("settings","refresh")
+    self._load_pref()
+  
+  def _load_pref(self, *args):
+    builder.get_object("-ref-time").set_value(self.refresh_num)
+    builder.get_object("r-color").set_rgba(self.red)
+    builder.get_object("g-color").set_rgba(self.green)
+    builder.get_object("b-color").set_rgba(self.blue)
+    builder.get_object("w-color").set_rgba(self.white)
+  
+  def _refresh_handler(self, widget, *args):
+    self.refresh_num = widget.get_value_as_int()
+  
+  def _red_color_changed(self, *args):
+    widget = args[0]
+    color = widget.get_rgba()
+    self.red = color
+  
+  def _close_pref(self, window, *args):
+    builder.get_object("pref_window").hide()
+  
+  def _green_color_changed(self, widget, *args):
+    color = widget.get_rgba()
+    self.green = color
+  
+  def _blue_color_changed(self, widget, *args):
+    color = widget.get_rgba()
+    self.blue = color
+  
+  def _white_changed(self, widget, *args):
+    color = widget.get_rgba()
+    self.white = color
+
+  def save_preference(self, *args):
+    open(config_dir, "w").write(f"[settings]\nrefresh={self.refresh_num}\nred={self.red.to_string()}\ngreen={self.green.to_string()}\nblue={self.blue.to_string()}\nwhite={self.white.to_string()}")
+    fdat = None
+    dd = f"{directory}/brightness-adjuster/ui/style.css"
+    with open(dd, "r+") as fd:
+      data = fd.read()
+      lines = [(ln, num) for num, ln in enumerate(data.split("\n")) \
+              if ln.find("/*") != -1 and ln.find("*/") != -1]
+      red_ln = lines[0][1]
+      green_ln = lines[1][1]
+      blue_ln = lines[2][1]
+      white_ln = lines[3][1]
+
+      red = "  background-color: " + self.red.to_string() + "; /*red*/"
+      green = "  background-color: " + self.green.to_string() + "; /*green*/"
+      blue = "  background-color: " + self.blue.to_string() + "; /*blue*/"
+      white = "  background-color: " + self.white.to_string() + "; /*white*/"
+
+      file = [x for x in data.split("\n")]
+      file[red_ln] = red
+      file[green_ln] = green
+      file[blue_ln] = blue
+      file[white_ln] = white
+      fdat = "\n".join(file)
+    with open(dd, "w+") as fd:
+      fd.write(fdat)
+    
+  
+  def _run(self, screen, brightness, r, g, b):
+    "Changes the brightness and gamma"
+    cmd = f"xrandr --output {screen} --brightness {brightness} --gamma {r}:{g}:{b}"
+    execute_command(cmd)
+  
+  def _brightness_changed(self, scale, scrolltype, number, screen):
+    "Handler for changed brightness and adjust using xrandr"
+    number = round(number, 5)
+    number /= 100
+    number = round(number, 5)
+    if number < 0.09 or number > 3.0:
+      return False
+    self.screens[screen]["default"] = number
+    self._run(screen,
+      self.screens[screen]["default"], \
+      self.screens[screen]["red"], \
+      self.screens[screen]["green"], \
+      self.screens[screen]["blue"]
+    )
+  
+  
+  def _gamma_changed(self, widget, scrolltype, number, color, screen):
+    "Handler for changed gamma and adjust gamma color"
+    if number < 0.0 or number > 255.0:
+      return False
+    
+    number /= 255
+    number = round(number, 5)
+    self.screens[screen][color] = number
+    self._run(screen,
+      self.screens[screen]['default'], \
+      self.screens[screen]["red"], \
+      self.screens[screen]["green"], \
+      self.screens[screen]["blue"]
+    )
+  
+  def _on_quit(self, *args):
+    self.window.hide()
+    self.save_preference()
+  
+  def _get_screens(self, *args):
+    return get_screens()
+  
+  def _split_gamma(self, gamma, *args):
+    r, g, b = gamma.split(":")
+    r, g, b = float(r)*255, float(g)*255, float(b)*255
+    return r, g, b
+
+  def _join_gamma(self, r, g, b, *args):
+    return f"{r}:{g}:{b}"
+  
+  def _refresh(self, *args):
+    screens = [x[0] for x in get_screens()]
+    screen_list = list(self.screens.keys())
+
+    for index, screen in enumerate(screen_list):
+      if screen not in screens:
+        self.notebook.remove_page(index)
+        del self.screens[screen]
+      if self.screens.get(screen, False):
+        self._run(screen,
+          self.screens[screen]['default'], \
+          self.screens[screen]["red"], \
+          self.screens[screen]["green"], \
+          self.screens[screen]["blue"]
+        )
+    screens = self._get_screens()
+    for screen in screens:
+      if screen[0] in screen_list:
+        continue
+      control = self._create_control(screen)
+      self.notebook.append_page(control, Gtk.Label(label=screen[0]))
+    self.notebook.show_all()
+    return True
+
+  def _create_control(self, screen,  *args):
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+
+    b2 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    b3 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+
+    b4 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+
+    b_r = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    b_g = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+    b_b = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+
+    lb_slider = Gtk.Label(label="Brightness")
+    g_slider = Gtk.Label(label="Gamma")
+
+    l_r_slider = Gtk.Label(label="R")
+    l_g_slider = Gtk.Label(label="G")
+    l_b_slider = Gtk.Label(label="B")
+
+    gamma = self._split_gamma(screen[1])
+    display = screen[0]
+    brightness = float(screen[2])*100
+
+
+    b_slider = Gtk.Scale()
+    b_slider.set_name("slider-default")
+    adj = Gtk.Adjustment(
+      value=0, lower=0, upper=100, step_increment=1, page_increment=25, page_size=0 #red adj
+    )
+    b_slider.set_restrict_to_fill_level(True)
+    adj.set_value(brightness)
+    b_slider.connect("change-value", self._brightness_changed, display)
+
+    b_slider.set_adjustment(adj)
+    b_slider.set_digits(0)
+    b_slider.set_inverted(True)
+    b_slider.set_orientation(Gtk.Orientation.VERTICAL)
+
+    g_r = Gtk.Scale()
+    g_r.set_name("slider-red")
+    g_r.connect("change-value", self._gamma_changed, "red", display)
+
+    g_g = Gtk.Scale()
+    g_g.set_name("slider-green")
+    g_g.connect("change-value", self._gamma_changed, "green", display)
+
+    g_b = Gtk.Scale()
+    g_b.set_name("slider-blue")
+    g_b.connect("change-value", self._gamma_changed, "blue", display)
+
+
+    adj1 = Gtk.Adjustment(
+      value=0, lower=0, upper=255, step_increment=1, page_increment=25, page_size=0 #red adj
+    )
+    adj1.set_value(gamma[0])
+    adj2 = Gtk.Adjustment(
+      value=0, lower=0, upper=255, step_increment=1, page_increment=25, page_size=0 #green adj
+    )
+    adj2.set_value(gamma[1])
+    adj3 = Gtk.Adjustment(
+      value=0, lower=0, upper=255, step_increment=1, page_increment=25, page_size=0 #blue adj
+    ) 
+    adj3.set_value(gamma[2])
+
+    g_r.set_adjustment(adj1)
+    g_g.set_adjustment(adj2)
+    g_b.set_adjustment(adj3)
+
+    g_r.set_orientation(Gtk.Orientation.VERTICAL)
+    g_g.set_orientation(Gtk.Orientation.VERTICAL)
+    g_b.set_orientation(Gtk.Orientation.VERTICAL)
+
+    g_r.set_inverted(True)
+    g_g.set_inverted(True)
+    g_b.set_inverted(True)
+
+    g_r.set_digits(0)
+    g_g.set_digits(0)
+    g_b.set_digits(0)
+
+    b2.pack_start(lb_slider, False, True, 0)
+    b2.pack_start(b_slider, True, True, 0)
+
+    b3.pack_start(g_slider, False, True, 0)
+
+    b4.pack_start(b_r, True, True, 0)
+    b4.pack_start(b_g, True, True, 0)
+    b4.pack_start(b_b, True, True, 0)
+
+    b_r.pack_start(l_r_slider, False, True, 0)
+    b_r.pack_start(g_r, True, True, 0)
+
+    b_g.pack_start(l_g_slider, False, True, 0)
+    b_g.pack_start(g_g, True, True, 0)
+
+    b_b.pack_start(l_b_slider, False, True, 0)
+    b_b.pack_start(g_b, True, True, 0)
+
+    box.pack_start(b2, False, True, 0)
+
+    b5 = Gtk.Box()
+    b5.pack_start(b4, True, True, 0)
+    b4.set_spacing(10)
+    b4.set_name("slider-box")
+    b3.pack_start(b5, True, True, 0)
+    box.pack_start(b3, True, True, 0)
+
+    box.set_margin_start(10)
+    box.set_margin_end(10)
+    box.set_margin_bottom(10)
+    box.set_margin_top(10)
+
+    box.show_all()
+
+    self.screens[display] = {}
+    self.screens[display]["default"] = round(brightness/100, 3)
+    self.screens[display]["red"] = round(gamma[0]/255, 3)
+    self.screens[display]["green"] = round(gamma[1]/255, 3)
+    self.screens[display]["blue"] = round(gamma[2]/255, 3)
+
+    return box
+
+  def _show(self, *args):
+    screens = self._get_screens()
+    for screen in screens:
+      control = self._create_control(screen)
+      self.notebook.append_page(control, Gtk.Label(label=screen[0]))
+    self.notebook.show_all()
+    GLib.timeout_add_seconds(configuration.getint("settings", "refresh"), self._refresh)
+
+
+class BrightnessApp(Gtk.Application):
+  def __init__(self,id, *args, **kwargs):
+    super().__init__(*args, application_id=id, **kwargs)
+    self.window = None
+
+  def do_startup(self, *args):
+    Gtk.Application.do_startup(self)
+    action = Gio.SimpleAction.new("about", None)
+    action.connect("activate", self.about)
+    self.add_action(action)
+    action = Gio.SimpleAction.new("exit", None)
+    action.connect("activate", self.on_quit)
+    self.add_action(action)
+    action = Gio.SimpleAction.new("preference", None)
+    action.connect("activate", self.preference)
+    self.add_action(action)
+
+  def do_activate(self, *args):
+    if not self.window:
+      builder.connect_signals(SigHandler())
+      self.window = builder.get_object("main_window")
+      self.about = builder.get_object("about_window")
+      self.add_window(self.window)
+    self.window.present()
+
+  def on_quit(self, *args):
+    self.quit()
+
+  def preference(self, *args):
+    pw = builder.get_object("pref_window")
+    pw.run()
+    pw.hide()
+    
+
+  def about(self, *args):
+    self.about.run()
+    self.about.hide()
+  
+    
+
+def main():
+  key = "BRIGHTNESS-APP-astral.co"
+  app = BrightnessApp(key)
+  sleep(0.5)
+  app.run()
+
+if __name__=="__main__":
+  from time import sleep
+  main()
